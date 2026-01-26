@@ -1,0 +1,35 @@
+# Docker Compose для OCR Service
+#
+# Запускает только API в Docker.
+# OCR Worker должен быть запущен отдельно на хосте.
+#
+# Использование:
+#   # 1. Запустить OCR Worker на хосте:
+#   python -m ocr_worker.main
+#
+#   # 2. Запустить API в Docker:
+#   docker-compose up
+#
+#   # 3. Отправить PDF:
+#   curl -X POST http://localhost:8000/ocr/execute -F "file=@test.pdf"
+
+services:
+  ocr-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # URL для доступа к хосту из Docker
+      - OCR_WORKER_URL=http://host.docker.internal:8001
+      # Лимиты
+      - OCR_MAX_FILE_SIZE_MB=100
+      - OCR_TIMEOUT_SECONDS=300
+    # Добавляем extra_hosts для Linux (host.docker.internal не работает по умолчанию)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

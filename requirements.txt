@@ -1,0 +1,38 @@
+# Зависимости OCR Service
+#
+# Для Docker API (app/):
+#   pip install fastapi uvicorn httpx python-multipart pydantic-settings
+#
+# Для OCR Worker (ocr_worker/) — устанавливать на хосте:
+#   pip install -r requirements.txt
+
+# === Web Framework ===
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# === HTTP Client (для API → Worker) ===
+httpx==0.26.0
+
+# === Validation ===
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# === PDF Processing ===
+pdf2image==1.16.3
+# Требует poppler-utils на системе:
+#   macOS: brew install poppler
+#   Ubuntu: apt-get install poppler-utils
+
+# === Image Processing ===
+Pillow==10.2.0
+numpy==1.26.3
+
+# === OCR ===
+pytesseract==0.3.10
+# Требует tesseract-ocr на системе:
+#   macOS: brew install tesseract tesseract-lang
+#   Ubuntu: apt-get install tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
+
+# === Deskew (коррекция наклона) ===
+deskew==1.4.0
