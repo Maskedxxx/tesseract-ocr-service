@@ -33,7 +33,6 @@ brew install poppler tesseract tesseract-lang
 apt-get install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
 
 # Python зависимости
-cd _ocr_service_temp
 pip install -r requirements.txt
 ```
 
@@ -161,36 +160,47 @@ curl -X POST http://localhost:8000/ocr/execute \
 
 ## Конфигурация
 
-### Переменные окружения (API)
+Все настройки задаются в файле `.env`. Скопируйте шаблон и настройте:
 
-| Переменная | По умолчанию | Описание |
-|------------|--------------|----------|
-| `OCR_WORKER_URL` | `http://host.docker.internal:8001` | URL OCR Worker |
-| `OCR_MAX_FILE_SIZE_MB` | `100` | Макс. размер PDF в МБ |
-| `OCR_TIMEOUT_SECONDS` | `300` | Таймаут ожидания Worker |
+```bash
+cp .env.example .env
+```
 
-### Внутренние параметры (Worker)
+Подробная документация по каждому параметру — в `.env.example`.
 
-| Параметр | Значение | Описание |
-|----------|----------|----------|
-| **Split** | | |
-| `render_dpi` | 300 | DPI рендеринга PDF |
-| `render_thread_count` | 8 | Потоков pdftoppm |
-| **OSD** | | |
-| `osd_crop_percent` | 0.15 | Кроп краёв (70% центр) |
-| `osd_resize_px` | 2048 | Размер для OSD |
-| **Deskew** | | |
-| `deskew_resize_px` | 1200 | Размер для deskew |
-| `deskew_num_peaks` | 20 | Пики для алгоритма |
-| `skew_threshold` | 0.3° | Мин. угол коррекции |
-| **OCR** | | |
-| `ocr_oem` | 3 | Engine: LSTM + Legacy |
-| `ocr_psm` | 6 | Page: uniform block |
+### API (префикс `OCR_`)
+
+| Переменная | Описание |
+|------------|----------|
+| `OCR_WORKER_URL` | URL OCR Worker |
+| `OCR_MAX_FILE_SIZE_MB` | Макс. размер PDF в МБ |
+| `OCR_TIMEOUT_SECONDS` | Таймаут ожидания Worker |
+
+### Worker (префикс `OCR_WORKER_`)
+
+| Параметр | Описание |
+|----------|----------|
+| **Split** | |
+| `OCR_WORKER_RENDER_DPI` | DPI рендеринга PDF |
+| `OCR_WORKER_RENDER_THREAD_COUNT` | Потоков pdftoppm |
+| **OSD** | |
+| `OCR_WORKER_OSD_CROP_PERCENT` | Кроп краёв (0.15 = 70% центр) |
+| `OCR_WORKER_OSD_RESIZE_PX` | Размер для OSD |
+| `OCR_WORKER_OSD_CONFIDENCE_THRESHOLD` | Мин. уверенность для поворота |
+| **Deskew** | |
+| `OCR_WORKER_DESKEW_RESIZE_PX` | Размер для deskew |
+| `OCR_WORKER_DESKEW_NUM_PEAKS` | Пики для алгоритма |
+| `OCR_WORKER_SKEW_THRESHOLD` | Мин. угол коррекции (градусы) |
+| **OCR** | |
+| `OCR_WORKER_OCR_OEM` | Engine mode (3 = LSTM + Legacy) |
+| `OCR_WORKER_OCR_PSM` | Page segmentation (6 = uniform block) |
 
 ## Структура проекта
 
 ```
-_ocr_service_temp/
+tesseract_docker/
+├── .env                          # Конфигурация (из .env.example)
+├── .env.example                  # Шаблон конфигурации с документацией
 ├── app/                          # Docker API
 │   ├── __init__.py
 │   ├── main.py                   # POST /ocr/execute, GET /health
