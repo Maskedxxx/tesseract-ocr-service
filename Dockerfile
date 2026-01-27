@@ -12,7 +12,7 @@
 FROM python:3.11-slim
 
 # Метаданные
-LABEL maintainer="FSKDefectPipeline"
+LABEL maintainer="tesseract-ocr-service"
 LABEL description="OCR Service API - проксирование к OCR Worker"
 LABEL version="1.0.0"
 
