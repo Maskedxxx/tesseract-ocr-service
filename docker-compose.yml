@@ -14,8 +14,9 @@
 #   curl -X POST http://localhost:8000/ocr/execute -F "file=@test.pdf"
 
 services:
-  ocr-api:
+  tesseract-ocr-service-api:
     build: .
+    image: tesseract-ocr-service-api
     ports:
       - "8000:8000"
     environment:

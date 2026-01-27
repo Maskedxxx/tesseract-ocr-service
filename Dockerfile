@@ -4,10 +4,10 @@
 # Проксирует запросы к OCR Worker, запущенному на хосте.
 #
 # Build:
-#   docker build -t ocr-api .
+#   docker build -t tesseract-ocr-service-api .
 #
 # Run:
-#   docker run -p 8000:8000 ocr-api
+#   docker run -p 8000:8000 tesseract-ocr-service-api
 
 FROM python:3.11-slim
 
