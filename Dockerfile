@@ -31,13 +31,7 @@ RUN pip install --no-cache-dir \
 # Копируем только app/ (API слой)
 COPY app/ ./app/
 
-# Порт API
-EXPOSE 8000
+# Переменные окружения читаются из .env через docker-compose (env_file)
 
-# Переменные окружения по умолчанию
-ENV OCR_WORKER_URL=http://host.docker.internal:8001
-ENV OCR_MAX_FILE_SIZE_MB=100
-ENV OCR_TIMEOUT_SECONDS=300
-
-# Запуск API
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Запуск API (порт из переменной OCR_PORT)
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${OCR_PORT}

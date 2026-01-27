@@ -131,24 +131,14 @@ async def process_pdf(
             detail="Файл не является валидным PDF",
         )
 
-    logger.info(f"Файл прочитан: {len(pdf_bytes)} байт")
-
     # Выполняем обработку в threadpool чтобы не блокировать event loop
     # (process_document использует ProcessPoolExecutor внутри)
     result = await run_in_threadpool(
         process_document,
         pdf_bytes,
         ocr_config,
+        file.filename or "unknown.pdf",
     )
-
-    if result.success:
-        total_chars = sum(len(p.text) for p in result.pages)
-        logger.info(
-            f"Успех: {len(result.pages)} страниц, {total_chars} символов, "
-            f"doc_id={result.doc_id}"
-        )
-    else:
-        logger.error(f"Ошибка: {result.error}")
 
     return result
 

@@ -34,10 +34,17 @@ echo -e "${BLUE}║       OCR Service - Остановка          ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
+# === Остановка процесса логирования ===
+DOCKER_LOGS_PID_FILE="$SCRIPT_DIR/.docker-logs.pid"
+if [ -f "$DOCKER_LOGS_PID_FILE" ]; then
+    kill $(cat "$DOCKER_LOGS_PID_FILE") 2>/dev/null || true
+    rm -f "$DOCKER_LOGS_PID_FILE"
+fi
+
 # === Остановка Docker ===
 echo -e "${YELLOW}[1/2] Остановка Docker API...${NC}"
 
-if docker-compose ps 2>/dev/null | grep -q "ocr-api"; then
+if docker-compose ps -q 2>/dev/null | grep -q .; then
     docker-compose down
     echo -e "  ${GREEN}✓${NC} Docker контейнер остановлен"
 else

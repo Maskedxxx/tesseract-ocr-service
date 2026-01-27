@@ -25,9 +25,43 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Файл для PID воркера
+# Файлы для PID и логов
 WORKER_PID_FILE="$SCRIPT_DIR/.worker.pid"
-WORKER_LOG_FILE="$SCRIPT_DIR/worker.log"
+LOG_FILE="$SCRIPT_DIR/ocr-service.log"
+
+# Ротация логов (максимум 10 MB, хранить 3 файла)
+MAX_LOG_SIZE_MB=10
+MAX_LOG_FILES=3
+
+rotate_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        # Размер файла в байтах
+        local size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+        local max_size=$((MAX_LOG_SIZE_MB * 1024 * 1024))
+
+        if [ "$size" -gt "$max_size" ]; then
+            echo -e "${YELLOW}Ротация логов (размер: $((size / 1024 / 1024)) MB)...${NC}"
+
+            # Удаляем самый старый
+            rm -f "${LOG_FILE}.${MAX_LOG_FILES}"
+
+            # Сдвигаем остальные
+            for i in $(seq $((MAX_LOG_FILES - 1)) -1 1); do
+                if [ -f "${LOG_FILE}.$i" ]; then
+                    mv "${LOG_FILE}.$i" "${LOG_FILE}.$((i + 1))"
+                fi
+            done
+
+            # Текущий → .1
+            mv "$LOG_FILE" "${LOG_FILE}.1"
+
+            echo -e "${GREEN}✓${NC} Лог ротирован → ${LOG_FILE}.1"
+        fi
+    fi
+}
+
+# Выполняем ротацию при старте
+rotate_logs
 
 # Порты
 WORKER_PORT=8001
@@ -37,6 +71,13 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║       OCR Service - Запуск             ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
+
+# === Проверка .env файла ===
+if [ ! -f "$SCRIPT_DIR/.env" ]; then
+    echo -e "${RED}✗ Файл .env не найден${NC}"
+    echo "  Создайте его: cp .env.example .env"
+    exit 1
+fi
 
 # === Проверка зависимостей ===
 echo -e "${YELLOW}[1/4] Проверка зависимостей...${NC}"
@@ -112,7 +153,7 @@ else
     # Запускаем Worker в фоне
     echo -e "  Запуск Worker на порту $WORKER_PORT..."
 
-    nohup $PYTHON_CMD -m ocr_worker.main > "$WORKER_LOG_FILE" 2>&1 &
+    nohup $PYTHON_CMD -m ocr_worker.main > "$LOG_FILE" 2>&1 &
     WORKER_PID=$!
     echo $WORKER_PID > "$WORKER_PID_FILE"
 
@@ -127,8 +168,8 @@ else
         # Проверяем, не упал ли процесс
         if ! kill -0 $WORKER_PID 2>/dev/null; then
             echo -e "${RED}✗ Worker упал при запуске${NC}"
-            echo "  Логи: $WORKER_LOG_FILE"
-            tail -20 "$WORKER_LOG_FILE"
+            echo "  Логи: $LOG_FILE"
+            tail -20 "$LOG_FILE"
             exit 1
         fi
 
@@ -140,7 +181,7 @@ else
     # Финальная проверка
     if ! curl -s http://localhost:$WORKER_PORT/health &> /dev/null; then
         echo -e "${RED}✗ Worker не отвечает после 30 секунд${NC}"
-        echo "  Логи: $WORKER_LOG_FILE"
+        echo "  Логи: $LOG_FILE"
         exit 1
     fi
 fi
@@ -176,5 +217,29 @@ else
     fi
 
     echo -e "  Запуск docker-compose..."
-    docker-compose up --build
+    docker-compose up --build -d
+
+    # Запускаем сбор логов Docker в общий файл
+    docker-compose logs -f >> "$LOG_FILE" 2>&1 &
+    echo $! > "$SCRIPT_DIR/.docker-logs.pid"
+
+    # Ждём запуска API
+    echo -e "  Ожидание готовности API..."
+    for i in {1..30}; do
+        if curl -s http://localhost:$API_PORT/health &> /dev/null; then
+            echo -e "  ${GREEN}✓${NC} API запущен на порту $API_PORT"
+            break
+        fi
+        sleep 1
+        echo -n "."
+    done
+    echo ""
+
+    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║       OCR Service запущен!             ║${NC}"
+    echo -e "${GREEN}╠════════════════════════════════════════╣${NC}"
+    echo -e "${GREEN}║  API:    http://localhost:$API_PORT         ║${NC}"
+    echo -e "${GREEN}║  Worker: http://localhost:$WORKER_PORT         ║${NC}"
+    echo -e "${GREEN}║  Логи:   tail -f ocr-service.log       ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
 fi

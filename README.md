@@ -21,22 +21,59 @@
 - ProcessPoolExecutor работает эффективнее на хосте
 - Не нужно тяжёлый образ с Tesseract внутри Docker
 
-## Быстрый старт
+## Деплой
 
-### 1. Установка зависимостей на хосте
+### 1. Системные зависимости
 
 ```bash
 # macOS
 brew install poppler tesseract tesseract-lang
 
 # Ubuntu/Debian
-apt-get install poppler-utils tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng
+sudo apt update
+sudo apt install -y tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng poppler-utils
 
-# Python зависимости
+# Проверка установки
+tesseract --version    # Tesseract 5.x.x
+pdftoppm -v            # poppler-utils
+```
+
+### 2. Python окружение
+
+```bash
+# Клонировать репозиторий
+git clone <repo-url> /opt/ocr-service
+cd /opt/ocr-service
+
+# Сделать скрипты исполняемыми (если права сбросились)
+chmod +x start.sh stop.sh
+
+# Создать виртуальное окружение
+python3 -m venv venv
+source venv/bin/activate
+
+# Установить зависимости
 pip install -r requirements.txt
 ```
 
-### 2. Запуск одной командой
+### 3. Конфигурация
+
+```bash
+cp .env.example .env
+nano .env  # редактировать под своё окружение
+```
+
+Ключевые параметры:
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `OCR_PORT` | Порт API | 8000 |
+| `OCR_WORKER_PORT` | Порт Worker | 8001 |
+| `OCR_WORKER_URL` | URL Worker для API | http://localhost:8001 |
+| `OCR_MAX_FILE_SIZE_MB` | Макс. размер PDF | 100 |
+| `OCR_TIMEOUT_SECONDS` | Таймаут обработки | 300 |
+
+### 4. Запуск
 
 ```bash
 # Запуск всего стека (Worker + Docker API)
@@ -44,46 +81,60 @@ pip install -r requirements.txt
 
 # Или локальный режим без Docker
 ./start.sh --local
+
+# Остановка
+./stop.sh
 ```
 
-**Скрипт автоматически:**
+Скрипт автоматически:
 - ✅ Проверяет зависимости (python, tesseract, poppler)
 - ✅ Запускает OCR Worker в фоне
 - ✅ Ждёт готовности Worker
 - ✅ Запускает Docker API (или локальный)
 
-### 3. Остановка
+### 5. Запуск через systemd (продакшн)
 
-```bash
-./stop.sh
+Создать `/etc/systemd/system/ocr-worker.service`:
+
+```ini
+[Unit]
+Description=OCR Worker Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/ocr-service
+Environment="PATH=/opt/ocr-service/venv/bin"
+ExecStart=/opt/ocr-service/venv/bin/python -m ocr_worker.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Ручной запуск (альтернатива)
-
 ```bash
-# Терминал 1: OCR Worker
-python -m ocr_worker.main
-
-# Терминал 2: Docker API
-docker-compose up
+sudo systemctl daemon-reload
+sudo systemctl enable ocr-worker
+sudo systemctl start ocr-worker
 ```
 
-### 4. Отправка PDF
+### 6. Проверка
 
 ```bash
-# Все страницы, русский язык
+# Health check
+curl http://localhost:8001/health   # Worker
+curl http://localhost:8000/health   # API
+
+# Тест OCR
 curl -X POST http://localhost:8000/ocr/execute \
   -F "file=@document.pdf"
 
-# Конкретные страницы, русский + английский
+# С параметрами
 curl -X POST http://localhost:8000/ocr/execute \
   -F "file=@document.pdf" \
   -F 'config={"languages":["rus","eng"],"pages":[1,2,3]}'
-
-# Диапазон страниц
-curl -X POST http://localhost:8000/ocr/execute \
-  -F "file=@document.pdf" \
-  -F 'config={"languages":["rus"],"page_start":1,"page_end":10}'
 ```
 
 ## API Endpoints
@@ -275,18 +326,6 @@ PDF файл
     │
     ▼
 JSON с текстом и метаданными
-```
-
-## Локальный запуск (без Docker)
-
-Для разработки можно запустить оба компонента локально:
-
-```bash
-# Терминал 1: OCR Worker
-python -m ocr_worker.main
-
-# Терминал 2: API (изменить URL на localhost)
-OCR_WORKER_URL=http://localhost:8001 python -m app.main
 ```
 
 ## Тестирование

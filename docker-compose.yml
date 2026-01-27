@@ -18,18 +18,14 @@ services:
     build: .
     image: tesseract-ocr-service-api
     ports:
-      - "8000:8000"
-    environment:
-      # URL для доступа к хосту из Docker
-      - OCR_WORKER_URL=http://host.docker.internal:8001
-      # Лимиты
-      - OCR_MAX_FILE_SIZE_MB=100
-      - OCR_TIMEOUT_SECONDS=300
+      - "${OCR_PORT}:${OCR_PORT}"
+    env_file:
+      - .env
     # Добавляем extra_hosts для Linux (host.docker.internal не работает по умолчанию)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "curl -f http://localhost:${OCR_PORT}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
