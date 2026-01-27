@@ -24,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ocr_worker.config import settings
 from ocr_worker.schemas import OCRConfigInput, OCRResult
+from ocr_worker.services.coordinates_store import get_coordinates, get_store_stats
 from ocr_worker.services.ocr_processor import process_document
 
 # Настройка логгера с временем
@@ -143,12 +144,116 @@ async def process_pdf(
     if result.success:
         total_chars = sum(len(p.text) for p in result.pages)
         logger.info(
-            f"Успех: {len(result.pages)} страниц, {total_chars} символов"
+            f"Успех: {len(result.pages)} страниц, {total_chars} символов, "
+            f"doc_id={result.doc_id}"
         )
     else:
         logger.error(f"Ошибка: {result.error}")
 
     return result
+
+
+@app.get("/documents/{doc_id}/coordinates")
+async def get_document_coordinates(doc_id: str) -> dict:
+    """
+    Получает координаты всех элементов документа.
+
+    Координаты используются фронтендом для подсветки текста
+    при поиске или навигации по документу.
+
+    Args:
+        doc_id: UUID документа (из ответа /process)
+
+    Returns:
+        dict: иерархия координат (страницы → блоки → параграфы → строки → слова)
+
+    Raises:
+        HTTPException: 404 если документ не найден
+    """
+    logger.info(f"Запрос координат: doc_id={doc_id}")
+
+    document = get_coordinates(doc_id)
+
+    if document is None:
+        logger.warning(f"Документ не найден: {doc_id}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Документ с id={doc_id} не найден. "
+            "Возможно, координаты были удалены или сервис был перезапущен.",
+        )
+
+    # Преобразуем dataclass в dict для JSON ответа
+    return _document_to_dict(document)
+
+
+@app.get("/documents/stats")
+async def get_documents_stats() -> dict:
+    """
+    Статистика хранилища координат.
+
+    Полезно для мониторинга использования памяти.
+
+    Returns:
+        dict: количество документов, самый старый/новый
+    """
+    return get_store_stats()
+
+
+def _document_to_dict(document) -> dict:
+    """
+    Преобразует DocumentCoordinates в словарь для JSON.
+
+    Args:
+        document: DocumentCoordinates объект
+
+    Returns:
+        dict: сериализуемый словарь
+    """
+    return {
+        "doc_id": document.doc_id,
+        "created_at": document.created_at.isoformat(),
+        "pages": [
+            {
+                "page_number": page.page_number,
+                "width": page.width,
+                "height": page.height,
+                "blocks": [
+                    {
+                        "block_id": block.block_id,
+                        "bbox": block.bbox,
+                        "paragraphs": [
+                            {
+                                "par_id": par.par_id,
+                                "bbox": par.bbox,
+                                "lines": [
+                                    {
+                                        "line_id": line.line_id,
+                                        "text": line.text,
+                                        "bbox": line.bbox,
+                                        "words": [
+                                            {
+                                                "text": word.text,
+                                                "left": word.left,
+                                                "top": word.top,
+                                                "width": word.width,
+                                                "height": word.height,
+                                                "conf": word.conf,
+                                            }
+                                            for word in line.words
+                                        ],
+                                    }
+                                    for line in par.lines
+                                ],
+                            }
+                            for par in block.paragraphs
+                        ],
+                    }
+                    for block in page.blocks
+                ],
+            }
+            for page in document.pages
+        ],
+    }
 
 
 def _parse_config(config_json: Optional[str]) -> OCRConfigInput:
