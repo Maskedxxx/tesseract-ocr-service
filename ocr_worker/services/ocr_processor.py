@@ -38,6 +38,9 @@ def process_ocr(args: tuple[int, Image.Image, str]) -> PageOCRResult:
     """
     Распознаёт текст на одной странице через Tesseract.
 
+    ОПТИМИЗИРОВАНО: один вызов image_to_data вместо двух вызовов
+    (image_to_string + image_to_data). Даёт ускорение ~2x.
+
     Args:
         args: кортеж (номер_страницы, PIL.Image, lang_string)
             lang_string: языки в формате Tesseract (например "rus+eng")
@@ -51,30 +54,24 @@ def process_ocr(args: tuple[int, Image.Image, str]) -> PageOCRResult:
     config = f"--oem {settings.ocr_oem} --psm {settings.ocr_psm}"
 
     try:
-        # Получаем текст
-        text = pytesseract.image_to_string(
+        # ОДИН вызов Tesseract — получаем ВСЕ данные (текст + confidence)
+        data = pytesseract.image_to_data(
             image,
             lang=lang,
             config=config,
+            output_type=pytesseract.Output.DICT,
         )
 
-        # Получаем данные с уверенностью для подсчёта среднего confidence
-        try:
-            data = pytesseract.image_to_data(
-                image,
-                lang=lang,
-                config=config,
-                output_type=pytesseract.Output.DICT,
-            )
-            # Фильтруем только слова с conf >= 0 (не пустые)
-            confidences = [
-                int(c)
-                for c in data["conf"]
-                if isinstance(c, (int, float)) and int(c) >= 0
-            ]
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
-        except Exception:
-            avg_confidence = 0.0
+        # Собираем текст из data с учётом структуры блоков/строк
+        text = _assemble_text_from_data(data)
+
+        # Вычисляем среднюю уверенность (только для реальных слов, conf >= 0)
+        confidences = [
+            int(c)
+            for c in data["conf"]
+            if isinstance(c, (int, float)) and int(c) >= 0
+        ]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
 
     except Exception as e:
         logger.warning(f"Ошибка OCR страницы {page_num}: {e}")
@@ -86,6 +83,61 @@ def process_ocr(args: tuple[int, Image.Image, str]) -> PageOCRResult:
         text=text,
         confidence=avg_confidence,
     )
+
+
+def _assemble_text_from_data(data: dict) -> str:
+    """
+    Собирает текст из словаря image_to_data с правильной структурой.
+
+    Алгоритм:
+        - Слова на одной строке (line_num) соединяются пробелами
+        - Разные строки в одном блоке — новая строка (\n)
+        - Разные блоки — пустая строка между ними (\n\n)
+
+    Args:
+        data: словарь от pytesseract.image_to_data()
+
+    Returns:
+        str: собранный текст с правильной структурой
+    """
+    n = len(data["text"])
+
+    # Структура: {block_num: {par_num: {line_num: [words]}}}
+    blocks = {}
+
+    for i in range(n):
+        word = data["text"][i].strip()
+        if not word:  # Пропускаем пустые записи
+            continue
+
+        block = data["block_num"][i]
+        par = data["par_num"][i]
+        line = data["line_num"][i]
+
+        if block not in blocks:
+            blocks[block] = {}
+        if par not in blocks[block]:
+            blocks[block][par] = {}
+        if line not in blocks[block][par]:
+            blocks[block][par][line] = []
+
+        blocks[block][par][line].append(word)
+
+    # Собираем текст: блоки → параграфы → строки → слова
+    result_blocks = []
+
+    for block_num in sorted(blocks.keys()):
+        block_lines = []
+        for par_num in sorted(blocks[block_num].keys()):
+            for line_num in sorted(blocks[block_num][par_num].keys()):
+                words = blocks[block_num][par_num][line_num]
+                line_text = " ".join(words)
+                block_lines.append(line_text)
+
+        result_blocks.append("\n".join(block_lines))
+
+    # Блоки разделяем двойным переносом строки
+    return "\n\n".join(result_blocks)
 
 
 def process_document(
