@@ -20,9 +20,10 @@ import os
 import time
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from ocr.config import settings
 from ocr.schemas import FileInfo, OCRConfig, OCRResponse, PageResult
@@ -58,6 +59,48 @@ app = FastAPI(
     version="2.0.0",
     default_response_class=UnicodeJSONResponse,
 )
+
+
+# --- Авторизация: проверка Bearer-токена ---
+# /health доступен без токена (для мониторинга и healthcheck)
+OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Проверяет Bearer-токен в заголовке Authorization."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Пропускаем открытые эндпоинты
+        if request.url.path in OPEN_PATHS:
+            return await call_next(request)
+
+        # Извлекаем токен из заголовка
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "Отсутствует заголовок Authorization"},
+            )
+
+        # Проверяем формат "Bearer <token>"
+        parts = auth_header.split(" ", 1)
+        if len(parts) != 2 or parts[0] != "Bearer":
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "Формат: Authorization: Bearer <token>"},
+            )
+
+        # Сравниваем токен
+        if parts[1] != settings.api_token:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "unauthorized", "message": "Неверный API токен"},
+            )
+
+        return await call_next(request)
+
+
+app.add_middleware(AuthMiddleware)
 
 
 @app.get("/health")

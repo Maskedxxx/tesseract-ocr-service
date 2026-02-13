@@ -7,16 +7,17 @@
 ```bash
 # 1. Конфигурация
 cp .env.example .env
-nano .env                        # указать свободный порт в OCR_PORT
+nano .env                        # указать OCR_PORT и OCR_API_TOKEN
 
 # 2. Запуск
 docker-compose up --build -d
 
-# 3. Проверка
+# 3. Проверка (без токена — /health открыт)
 curl http://localhost:8000/health
 
-# 4. Распознать PDF
+# 4. Распознать PDF (с токеном)
 curl -X POST http://localhost:8000/ocr/execute \
+  -H "Authorization: Bearer your-secret-token-here" \
   -F "file=@document.pdf"
 ```
 
@@ -27,6 +28,7 @@ curl -X POST http://localhost:8000/ocr/execute \
 | Переменная | Что делает | По умолчанию |
 |---|---|---|
 | `OCR_PORT` | Порт сервиса | `8000` |
+| `OCR_API_TOKEN` | Токен авторизации (обязательный) | — |
 | `OCR_MAX_FILE_SIZE_MB` | Макс. размер PDF | `100` |
 | `OCR_RENDER_DPI` | DPI рендеринга | `300` |
 | `OCR_RENDER_THREAD_COUNT` | Потоки pdftoppm | `8` |
@@ -38,6 +40,23 @@ curl -X POST http://localhost:8000/ocr/execute \
 OCR_PORT=9090
 ```
 
+## Авторизация
+
+Все эндпоинты (кроме `/health`) требуют Bearer-токен в заголовке `Authorization`:
+
+```
+Authorization: Bearer <OCR_API_TOKEN>
+```
+
+| Эндпоинт | Токен |
+|---|---|
+| `GET /health` | Не требуется |
+| `POST /ocr/execute` | Требуется |
+| `GET /documents/{doc_id}/coordinates` | Требуется |
+| `GET /documents/stats` | Требуется |
+
+При отсутствии или неверном токене сервис возвращает `401 Unauthorized`.
+
 ## API
 
 ### `POST /ocr/execute` — распознать PDF
@@ -45,10 +64,12 @@ OCR_PORT=9090
 ```bash
 # Простой вызов (язык: rus, все страницы)
 curl -X POST http://localhost:8000/ocr/execute \
+  -H "Authorization: Bearer your-secret-token-here" \
   -F "file=@document.pdf"
 
 # С параметрами
 curl -X POST http://localhost:8000/ocr/execute \
+  -H "Authorization: Bearer your-secret-token-here" \
   -F "file=@document.pdf" \
   -F 'config={"languages":["rus","eng"], "pages":[1,2,3]}'
 ```
@@ -101,13 +122,15 @@ curl http://localhost:8000/health
 Для подсветки текста на фронтенде. `doc_id` берётся из ответа `/ocr/execute`.
 
 ```bash
-curl http://localhost:8000/documents/<doc_id>/coordinates
+curl http://localhost:8000/documents/<doc_id>/coordinates \
+  -H "Authorization: Bearer your-secret-token-here"
 ```
 
 ### `GET /documents/stats` — статистика хранилища
 
 ```bash
-curl http://localhost:8000/documents/stats
+curl http://localhost:8000/documents/stats \
+  -H "Authorization: Bearer your-secret-token-here"
 ```
 
 ## Управление

@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # --- Сервер ---
     port: int = 8000
 
+    # --- Авторизация ---
+    # Статический API-токен для доступа к сервису
+    # Передаётся в заголовке: Authorization: Bearer <token>
+    api_token: str
+
     # --- API: лимиты ---
     max_file_size_mb: int
 
