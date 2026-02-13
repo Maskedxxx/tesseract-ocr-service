@@ -1,11 +1,9 @@
 """
-Схемы данных для OCR Worker.
-
-Внутренние структуры данных для обмена между компонентами Worker.
+Единые схемы данных OCR Service v2.
 
 Включает:
+    - Pydantic модели для API (конфигурация, ответ, результат страницы)
     - Внутренние dataclass'ы для пайплайна обработки
-    - Pydantic модели для API ответов
     - Структуры координат для подсветки текста на фронтенде
 """
 
@@ -13,7 +11,116 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+# =============================================================================
+# Pydantic модели для API
+# =============================================================================
+
+
+class OCRConfig(BaseModel):
+    """
+    Конфигурация OCR от пользователя.
+
+    Приоритет выбора страниц:
+        1. pages — конкретные страницы [1, 3, 5]
+        2. page_start/page_end — диапазон
+        3. Если ничего не указано — все страницы
+
+    Attributes:
+        languages: список языков для OCR (по умолчанию ["rus"])
+        pages: конкретные номера страниц для обработки
+        page_start: начало диапазона страниц
+        page_end: конец диапазона страниц
+    """
+
+    languages: list[str] = Field(
+        default=["rus"],
+        description="Языки для OCR: ['rus'], ['eng'], ['rus', 'eng']",
+    )
+    pages: Optional[list[int]] = Field(
+        default=None,
+        description="Конкретные страницы: [1, 3, 5]",
+    )
+    page_start: Optional[int] = Field(
+        default=None,
+        description="Начало диапазона страниц",
+        ge=1,
+    )
+    page_end: Optional[int] = Field(
+        default=None,
+        description="Конец диапазона страниц",
+        ge=1,
+    )
+
+
+class PageResult(BaseModel):
+    """
+    Результат OCR для одной страницы.
+
+    Attributes:
+        page_number: номер страницы (начинается с 1)
+        text: распознанный текст
+        confidence: средняя уверенность распознавания (0-100)
+        rotation_applied: угол поворота, который был применён (0, 90, 180, 270)
+        deskew_angle: угол коррекции наклона в градусах
+        width: ширина изображения в пикселях
+        height: высота изображения в пикселях
+        processing_time_ms: время обработки страницы в мс
+    """
+
+    page_number: int
+    text: str
+    confidence: float = 0.0
+    rotation_applied: int = 0
+    deskew_angle: float = 0.0
+    width: int = 0
+    height: int = 0
+    processing_time_ms: int = 0
+
+
+class FileInfo(BaseModel):
+    """
+    Информация о загруженном файле.
+
+    Attributes:
+        filename: имя файла
+        size_bytes: размер файла в байтах
+    """
+
+    filename: str
+    size_bytes: int
+
+
+class OCRResponse(BaseModel):
+    """
+    Ответ API с результатами OCR.
+
+    Attributes:
+        success: успешность операции
+        doc_id: UUID документа для запроса координат
+        total_pages: общее количество обработанных страниц
+        processing_time_ms: общее время обработки в мс
+        pages: список результатов по страницам
+        config_used: конфигурация, которая была использована
+        file_info: информация о файле
+        error: сообщение об ошибке (если success=False)
+    """
+
+    success: bool
+    doc_id: Optional[str] = None
+    total_pages: int
+    processing_time_ms: int
+    pages: list[PageResult] = []
+    config_used: OCRConfig
+    file_info: FileInfo
+    error: Optional[str] = None
+
+
+# =============================================================================
+# Внутренние dataclass'ы для пайплайна
+# =============================================================================
 
 
 @dataclass
@@ -64,67 +171,6 @@ class PageOCRResult:
     page_num: int
     text: str
     confidence: float = 0.0
-
-
-class PageResult(BaseModel):
-    """
-    Полный результат обработки одной страницы.
-
-    Включает все метаданные обработки для возврата через API.
-
-    Attributes:
-        page_number: номер страницы (начинается с 1)
-        text: распознанный текст
-        confidence: средняя уверенность распознавания (0-100)
-        rotation_applied: угол поворота, который был применён
-        deskew_angle: угол коррекции наклона
-        width: ширина изображения в пикселях
-        height: высота изображения в пикселях
-        processing_time_ms: время обработки страницы
-    """
-
-    page_number: int
-    text: str
-    confidence: float = 0.0
-    rotation_applied: int = 0
-    deskew_angle: float = 0.0
-    width: int = 0
-    height: int = 0
-    processing_time_ms: int = 0
-
-
-class OCRConfigInput(BaseModel):
-    """
-    Входная конфигурация OCR от Docker API.
-
-    Attributes:
-        languages: языки для распознавания
-        pages: конкретные страницы для обработки
-        page_start: начало диапазона страниц
-        page_end: конец диапазона страниц
-    """
-
-    languages: list[str] = ["rus"]
-    pages: Optional[list[int]] = None
-    page_start: Optional[int] = None
-    page_end: Optional[int] = None
-
-
-class OCRResult(BaseModel):
-    """
-    Результат обработки документа для возврата в Docker API.
-
-    Attributes:
-        success: успешность операции
-        doc_id: уникальный идентификатор документа для получения координат
-        pages: список результатов по страницам
-        error: сообщение об ошибке (если success=False)
-    """
-
-    success: bool
-    doc_id: Optional[str] = None  # UUID для запроса координат
-    pages: list[PageResult] = []
-    error: Optional[str] = None
 
 
 # =============================================================================

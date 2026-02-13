@@ -1,7 +1,7 @@
 """
 Воркер для определения угла наклона текста (deskew).
 
-Использует библиотеку deskew для определения мелкого наклона текста (1-5°).
+Использует библиотеку deskew для определения мелкого наклона текста (1-5).
 Предназначен для использования в ProcessPoolExecutor.
 
 Оптимизации:
@@ -15,8 +15,8 @@ import numpy as np
 from deskew import determine_skew
 from PIL import Image
 
-from ocr_worker.config import settings
-from ocr_worker.schemas import PageSkew
+from ocr.config import settings
+from ocr.schemas import PageSkew
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def process_skew(args: tuple[int, Image.Image]) -> PageSkew:
     except Exception:
         angle = 0.0
 
-    # None → 0.0
+    # None -> 0.0
     angle = angle if angle is not None else 0.0
 
     # Определяем, нужна ли коррекция

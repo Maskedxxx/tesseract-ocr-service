@@ -1,32 +1,32 @@
-# Docker Compose для OCR Service
+# Docker Compose для OCR Service v2
 #
-# Запускает только API в Docker.
-# OCR Worker должен быть запущен отдельно на хосте.
+# Единый контейнер с FastAPI + Tesseract + Poppler.
+# Не требует Python или Tesseract на хосте.
 #
 # Использование:
-#   # 1. Запустить OCR Worker на хосте:
-#   python -m ocr_worker.main
+#   docker-compose up --build -d
 #
-#   # 2. Запустить API в Docker:
-#   docker-compose up
-#
-#   # 3. Отправить PDF:
+#   # Отправить PDF:
 #   curl -X POST http://localhost:8000/ocr/execute -F "file=@test.pdf"
 
 services:
-  tesseract-ocr-service-api:
+  ocr-service:
     build: .
-    image: tesseract-ocr-service-api
+    image: tesseract-ocr-service
+    container_name: tesseract-ocr-service
     ports:
-      - "${OCR_PORT}:${OCR_PORT}"
+      - "${OCR_PORT:-8000}:${OCR_PORT:-8000}"
     env_file:
       - .env
-    # Добавляем extra_hosts для Linux (host.docker.internal не работает по умолчанию)
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 8G
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:${OCR_PORT}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${OCR_PORT:-8000}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
+    restart: unless-stopped

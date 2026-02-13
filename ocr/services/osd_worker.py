@@ -1,7 +1,7 @@
 """
 Воркер для определения ориентации текста (OSD — Orientation and Script Detection).
 
-Использует Tesseract OCR для определения угла поворота текста (0, 90, 180, 270°).
+Использует Tesseract OCR для определения угла поворота текста (0, 90, 180, 270).
 Предназначен для использования в ProcessPoolExecutor.
 
 Оптимизации:
@@ -15,8 +15,8 @@ import logging
 import pytesseract
 from PIL import Image, ImageOps
 
-from ocr_worker.config import settings
-from ocr_worker.schemas import PageOrientation
+from ocr.config import settings
+from ocr.schemas import PageOrientation
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ def apply_rotation(img: Image.Image, rotation: int) -> Image.Image:
     Чтобы исправить, нужно повернуть в ОБРАТНУЮ сторону (на -rotation).
 
     Пример:
-        - OSD говорит rotate=90 → текст повёрнут на 90° по часовой
-        - Чтобы исправить → поворачиваем на 90° ПРОТИВ часовой (ROTATE_270 в PIL)
+        - OSD говорит rotate=90 -> текст повёрнут на 90 по часовой
+        - Чтобы исправить -> поворачиваем на 90 ПРОТИВ часовой (ROTATE_270 в PIL)
 
     Args:
         img: исходное изображение
@@ -109,13 +109,13 @@ def apply_rotation(img: Image.Image, rotation: int) -> Image.Image:
     # Коррекция: применяем ОБРАТНЫЙ поворот (360 - rotation)
 
     if rotation == 90:
-        # Текст повёрнут на 90° → исправляем поворотом на -90° (= 270° = по часовой)
+        # Текст повёрнут на 90 -> исправляем поворотом на -90 (= 270 = по часовой)
         return img.transpose(Image.Transpose.ROTATE_270)
     elif rotation == 180:
-        # 180° одинаково в обе стороны
+        # 180 одинаково в обе стороны
         return img.transpose(Image.Transpose.ROTATE_180)
     elif rotation == 270:
-        # Текст повёрнут на 270° → исправляем поворотом на -270° (= 90° = против часовой)
+        # Текст повёрнут на 270 -> исправляем поворотом на -270 (= 90 = против часовой)
         return img.transpose(Image.Transpose.ROTATE_90)
     else:
         # Для произвольных углов: поворачиваем в обратную сторону

@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from ocr_worker.schemas import DocumentCoordinates, PageCoordinates
+from ocr.schemas import DocumentCoordinates, PageCoordinates
 
 logger = logging.getLogger(__name__)
 

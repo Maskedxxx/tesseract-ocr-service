@@ -1,30 +1,38 @@
 """
-Конфигурация OCR Worker — параметры обработки документов.
+Единая конфигурация OCR Service v2.
 
+Объединяет настройки API и Worker в одном классе.
 Все значения читаются из .env файла (или переменных окружения).
-Дефолтов нет — .env обязателен для запуска.
 
+Единый префикс: OCR_
 Документация по параметрам: .env.example
 """
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class WorkerSettings(BaseSettings):
+class Settings(BaseSettings):
     """
-    Настройки OCR Worker.
+    Настройки OCR Service.
 
-    Читает переменные с префиксом OCR_WORKER_ из .env файла.
+    Читает переменные с префиксом OCR_ из .env файла.
+    Объединяет все параметры: API лимиты + параметры обработки.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="OCR_WORKER_",
+        env_prefix="OCR_",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",  # Игнорируем OCR_* переменные (без WORKER_)
+        extra="ignore",
     )
 
-    # --- Split: PDF → images ---
+    # --- Сервер ---
+    port: int = 8000
+
+    # --- API: лимиты ---
+    max_file_size_mb: int
+
+    # --- Split: PDF -> images ---
     render_dpi: int
     render_thread_count: int
     render_format: str
@@ -43,10 +51,6 @@ class WorkerSettings(BaseSettings):
     ocr_oem: int
     ocr_psm: int
 
-    # --- Сервер ---
-    host: str
-    port: int
-
 
 # Глобальный экземпляр настроек
-settings = WorkerSettings()
+settings = Settings()

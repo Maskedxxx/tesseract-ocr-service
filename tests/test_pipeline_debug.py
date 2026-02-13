@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytesseract
 from PIL import Image, ImageOps
 
-from ocr_worker.config import settings
+from ocr.config import settings
 
 
 # ============================================================================

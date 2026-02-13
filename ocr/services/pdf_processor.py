@@ -12,7 +12,7 @@ from typing import Optional
 from pdf2image import convert_from_bytes
 from PIL import Image
 
-from ocr_worker.config import settings
+from ocr.config import settings
 
 logger = logging.getLogger(__name__)
 

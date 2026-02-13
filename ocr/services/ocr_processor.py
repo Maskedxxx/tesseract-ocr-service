@@ -4,7 +4,7 @@
 Содержит:
     - Функцию распознавания текста через Tesseract
     - Главную функцию process_document, координирующую весь пайплайн:
-      split → OSD → deskew → OCR
+      split -> OSD -> deskew -> OCR
 
 Параллелизация:
     - Split: многопоточный pdftoppm
@@ -20,22 +20,21 @@ from typing import Optional
 import pytesseract
 from PIL import Image
 
-from ocr_worker.config import settings
-from ocr_worker.schemas import (
+from ocr.config import settings
+from ocr.schemas import (
     BlockCoordinates,
     LineCoordinates,
-    OCRConfigInput,
-    OCRResult,
+    OCRConfig,
     PageCoordinates,
     PageOCRResult,
     PageResult,
     ParagraphCoordinates,
     WordCoordinates,
 )
-from ocr_worker.services.coordinates_store import save_coordinates
-from ocr_worker.services.osd_worker import apply_rotation, process_osd
-from ocr_worker.services.pdf_processor import split_pdf_to_images
-from ocr_worker.services.skew_worker import apply_deskew, process_skew
+from ocr.services.coordinates_store import save_coordinates
+from ocr.services.osd_worker import apply_rotation, process_osd
+from ocr.services.pdf_processor import split_pdf_to_images
+from ocr.services.skew_worker import apply_deskew, process_skew
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +119,8 @@ def _assemble_text_from_data(data: dict) -> str:
 
     Алгоритм:
         - Слова на одной строке (line_num) соединяются пробелами
-        - Разные строки в одном блоке — новая строка (\n)
-        - Разные блоки — пустая строка между ними (\n\n)
+        - Разные строки в одном блоке — новая строка (\\n)
+        - Разные блоки — пустая строка между ними (\\n\\n)
 
     Args:
         data: словарь от pytesseract.image_to_data()
@@ -152,7 +151,7 @@ def _assemble_text_from_data(data: dict) -> str:
 
         blocks[block][par][line].append(word)
 
-    # Собираем текст: блоки → параграфы → строки → слова
+    # Собираем текст: блоки -> параграфы -> строки -> слова
     result_blocks = []
 
     for block_num in sorted(blocks.keys()):
@@ -178,7 +177,7 @@ def _extract_coordinates_from_data(
     """
     Извлекает координаты всех элементов из словаря image_to_data.
 
-    Строит иерархию: Block → Paragraph → Line → Word с bounding box
+    Строит иерархию: Block -> Paragraph -> Line -> Word с bounding box
     для каждого уровня.
 
     Args:
@@ -325,20 +324,20 @@ def _compute_bbox_from_bboxes(bboxes: list[dict]) -> dict:
 
 def process_document(
     pdf_bytes: bytes,
-    config: OCRConfigInput,
+    config: OCRConfig,
     filename: str = "unknown.pdf",
-) -> OCRResult:
+) -> dict:
     """
     Основная функция обработки документа.
 
     Координирует весь пайплайн:
-        1. Split: PDF → images (параллельно через pdftoppm)
+        1. Split: PDF -> images (параллельно через pdftoppm)
         2. OSD: определение ориентации (ProcessPoolExecutor)
         3. Применение поворотов
         4. Deskew: определение наклона (ProcessPoolExecutor)
         5. Применение коррекции наклона
         6. OCR: распознавание текста (ProcessPoolExecutor)
-        7. Сборка результата
+        7. Сохранение координат и сборка результата
 
     Args:
         pdf_bytes: содержимое PDF файла
@@ -346,7 +345,7 @@ def process_document(
         filename: имя файла для логирования
 
     Returns:
-        OCRResult: результат обработки со всеми страницами
+        dict: результат обработки со всеми страницами
     """
     total_start = time.perf_counter()
 
@@ -364,14 +363,14 @@ def process_document(
     file_size_mb = len(pdf_bytes) / (1024 * 1024)
 
     logger.info("=" * 60)
-    logger.info(f"📄 НОВЫЙ ЗАПРОС OCR")
+    logger.info(f"НОВЫЙ ЗАПРОС OCR")
     logger.info(f"   Файл: {filename} ({file_size_mb:.2f} MB)")
     logger.info(f"   Страницы: {pages_requested}")
     logger.info(f"   Языки: {lang_string}")
     logger.info("=" * 60)
 
     try:
-        # 1. Split: PDF → images
+        # 1. Split: PDF -> images
         split_start = time.perf_counter()
 
         images = split_pdf_to_images(
@@ -382,13 +381,15 @@ def process_document(
         )
 
         split_duration = int((time.perf_counter() - split_start) * 1000)
-        logger.info(f"   ✓ Split: {len(images)} страниц за {split_duration}ms")
+        logger.info(f"   Split: {len(images)} страниц за {split_duration}ms")
 
         if not images:
-            return OCRResult(
-                success=False,
-                error="PDF не содержит страниц для обработки",
-            )
+            return {
+                "success": False,
+                "doc_id": None,
+                "pages": [],
+                "error": "PDF не содержит страниц для обработки",
+            }
 
         # Количество CPU для параллелизации
         cpu_count = os.cpu_count() or 4
@@ -402,10 +403,10 @@ def process_document(
         osd_duration = int((time.perf_counter() - osd_start) * 1000)
         rotated_pages = [r for r in osd_results if r.needs_rotation]
 
-        logger.info(f"   ✓ OSD: {osd_duration}ms")
+        logger.info(f"   OSD: {osd_duration}ms")
         if rotated_pages:
             for r in rotated_pages:
-                logger.info(f"        Поворот: стр.{r.page_num} → {r.rotate}°")
+                logger.info(f"        Поворот: стр.{r.page_num} -> {r.rotate}")
         else:
             logger.info(f"        Все страницы в правильной ориентации")
 
@@ -427,10 +428,10 @@ def process_document(
         deskew_duration = int((time.perf_counter() - deskew_start) * 1000)
         skewed_pages = [r for r in skew_results if r.needs_deskew]
 
-        logger.info(f"   ✓ Deskew: {deskew_duration}ms")
+        logger.info(f"   Deskew: {deskew_duration}ms")
         if skewed_pages:
             for r in skewed_pages:
-                logger.info(f"        Наклон: стр.{r.page_num} → {r.angle:.1f}°")
+                logger.info(f"        Наклон: стр.{r.page_num} -> {r.angle:.1f}")
         else:
             logger.info(f"        Наклон не обнаружен")
 
@@ -468,7 +469,7 @@ def process_document(
         )
 
         # Логируем результат OCR
-        logger.info(f"   ✓ OCR: {ocr_duration}ms")
+        logger.info(f"   OCR: {ocr_duration}ms")
         logger.info(f"        Символов: {total_chars}, Слов: {total_words}")
         for r in ocr_results:
             logger.info(f"        стр.{r.page_num}: {len(r.text)} симв., уверенность {r.confidence:.0f}%")
@@ -491,27 +492,25 @@ def process_document(
             )
             width, height = img_for_page.size if img_for_page else (0, 0)
 
-            page_results.append(
-                PageResult(
-                    page_number=page_num,
-                    text=ocr_result.text,
-                    confidence=ocr_result.confidence,
-                    rotation_applied=rotations.get(page_num, 0),
-                    deskew_angle=skew_angles.get(page_num, 0.0),
-                    width=width,
-                    height=height,
-                    processing_time_ms=0,  # Общее время делим позже
-                )
-            )
+            page_results.append({
+                "page_number": page_num,
+                "text": ocr_result.text,
+                "confidence": ocr_result.confidence,
+                "rotation_applied": rotations.get(page_num, 0),
+                "deskew_angle": skew_angles.get(page_num, 0.0),
+                "width": width,
+                "height": height,
+                "processing_time_ms": 0,
+            })
 
         # Сортируем по номеру страницы
-        page_results.sort(key=lambda p: p.page_number)
+        page_results.sort(key=lambda p: p["page_number"])
 
         # Средняя уверенность по всем страницам
         avg_confidence = sum(r.confidence for r in ocr_results) / len(ocr_results) if ocr_results else 0
 
         logger.info("=" * 60)
-        logger.info(f"✅ ОБРАБОТКА ЗАВЕРШЕНА")
+        logger.info(f"ОБРАБОТКА ЗАВЕРШЕНА")
         logger.info(f"   Файл: {filename}")
         logger.info(f"   Страниц: {len(page_results)}")
         logger.info(f"   Символов: {total_chars}")
@@ -519,7 +518,7 @@ def process_document(
         logger.info(f"   Средняя уверенность: {avg_confidence:.1f}%")
         logger.info(f"   doc_id: {doc_id}")
         logger.info("-" * 60)
-        logger.info(f"   ⏱ Время по этапам:")
+        logger.info(f"   Время по этапам:")
         logger.info(f"      Split:  {split_duration}ms")
         logger.info(f"      OSD:    {osd_duration}ms")
         logger.info(f"      Deskew: {deskew_duration}ms")
@@ -527,15 +526,17 @@ def process_document(
         logger.info(f"      ИТОГО:  {total_duration}ms")
         logger.info("=" * 60)
 
-        return OCRResult(
-            success=True,
-            doc_id=doc_id,
-            pages=page_results,
-        )
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "pages": page_results,
+        }
 
     except Exception as e:
         logger.exception(f"Ошибка обработки документа: {e}")
-        return OCRResult(
-            success=False,
-            error=str(e),
-        )
+        return {
+            "success": False,
+            "doc_id": None,
+            "pages": [],
+            "error": str(e),
+        }

@@ -1,37 +1,52 @@
-# Docker образ для OCR API
+# Docker образ для OCR Service v2
 #
-# Содержит только API слой (без Tesseract).
-# Проксирует запросы к OCR Worker, запущенному на хосте.
+# Единый контейнер: FastAPI + Tesseract + Poppler
+# Все зависимости внутри — не требует Python/Tesseract на хосте.
 #
 # Build:
-#   docker build -t tesseract-ocr-service-api .
+#   docker build -t tesseract-ocr-service .
 #
 # Run:
-#   docker run -p 8000:8000 tesseract-ocr-service-api
+#   docker run -p 8000:8000 --env-file .env tesseract-ocr-service
 
 FROM python:3.11-slim
 
 # Метаданные
 LABEL maintainer="tesseract-ocr-service"
-LABEL description="OCR Service API - проксирование к OCR Worker"
-LABEL version="1.0.0"
+LABEL description="OCR Service v2 — распознавание текста из PDF (единый контейнер)"
+LABEL version="2.0.0"
+
+# Системные зависимости: Tesseract + Poppler + curl (healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-rus \
+    tesseract-ocr-eng \
+    poppler-utils \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Рабочая директория
 WORKDIR /app
 
-# Устанавливаем зависимости API (без Tesseract и pdf2image)
-RUN pip install --no-cache-dir \
-    fastapi==0.109.0 \
-    uvicorn==0.27.0 \
-    httpx==0.26.0 \
-    python-multipart==0.0.6 \
-    pydantic==2.5.3 \
-    pydantic-settings==2.1.0
+# Устанавливаем Python зависимости
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем только app/ (API слой)
-COPY app/ ./app/
+# Копируем модуль OCR
+COPY ocr/ ./ocr/
+
+# Оптимизация CPU: запрет OpenMP внутри worker-процессов
+# Без этого каждый Tesseract worker создаст N потоков через OpenMP,
+# что при 8 процессах даст 64+ потоков и деградацию
+ENV OMP_THREAD_LIMIT=1
+
+# Путь к данным Tesseract (Debian-based python:3.11-slim)
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 # Переменные окружения читаются из .env через docker-compose (env_file)
 
-# Запуск API (порт из переменной OCR_PORT)
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${OCR_PORT}
+# Порт по умолчанию (переопределяется через OCR_PORT в .env)
+ENV OCR_PORT=8000
+
+# Запуск сервиса — порт берётся из переменной окружения
+CMD uvicorn ocr.main:app --host 0.0.0.0 --port ${OCR_PORT}

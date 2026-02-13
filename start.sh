@@ -1,16 +1,13 @@
 #!/bin/bash
 #
-# Скрипт запуска OCR Service
+# Скрипт запуска OCR Service v2
 #
-# Выполняет:
-#   1. Проверяет зависимости (python, tesseract, poppler)
-#   2. Запускает OCR Worker на хосте в фоне
-#   3. Ждёт готовности Worker
-#   4. Запускает Docker API
+# Единый Docker-контейнер: FastAPI + Tesseract + Poppler.
+# Не требует Python или Tesseract на хосте.
 #
 # Использование:
-#   ./start.sh          # Запуск всего стека
-#   ./start.sh --local  # Запуск без Docker (оба на хосте)
+#   ./start.sh           # Запуск через Docker
+#   ./start.sh --build   # Принудительная пересборка образа
 
 set -e
 
@@ -25,50 +22,8 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Файлы для PID и логов
-WORKER_PID_FILE="$SCRIPT_DIR/.worker.pid"
-LOG_FILE="$SCRIPT_DIR/ocr-service.log"
-
-# Ротация логов (максимум 10 MB, хранить 3 файла)
-MAX_LOG_SIZE_MB=10
-MAX_LOG_FILES=3
-
-rotate_logs() {
-    if [ -f "$LOG_FILE" ]; then
-        # Размер файла в байтах
-        local size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-        local max_size=$((MAX_LOG_SIZE_MB * 1024 * 1024))
-
-        if [ "$size" -gt "$max_size" ]; then
-            echo -e "${YELLOW}Ротация логов (размер: $((size / 1024 / 1024)) MB)...${NC}"
-
-            # Удаляем самый старый
-            rm -f "${LOG_FILE}.${MAX_LOG_FILES}"
-
-            # Сдвигаем остальные
-            for i in $(seq $((MAX_LOG_FILES - 1)) -1 1); do
-                if [ -f "${LOG_FILE}.$i" ]; then
-                    mv "${LOG_FILE}.$i" "${LOG_FILE}.$((i + 1))"
-                fi
-            done
-
-            # Текущий → .1
-            mv "$LOG_FILE" "${LOG_FILE}.1"
-
-            echo -e "${GREEN}✓${NC} Лог ротирован → ${LOG_FILE}.1"
-        fi
-    fi
-}
-
-# Выполняем ротацию при старте
-rotate_logs
-
-# Порты
-WORKER_PORT=8001
-API_PORT=8000
-
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║       OCR Service - Запуск             ║${NC}"
+echo -e "${BLUE}║     OCR Service v2 - Запуск            ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -78,168 +33,54 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
     echo "  Создайте его: cp .env.example .env"
     exit 1
 fi
+echo -e "${GREEN}✓${NC} Файл .env найден"
 
-# === Проверка зависимостей ===
-echo -e "${YELLOW}[1/4] Проверка зависимостей...${NC}"
+# Читаем порт из .env (по умолчанию 8000)
+OCR_PORT=$(grep -E "^OCR_PORT=" "$SCRIPT_DIR/.env" 2>/dev/null | cut -d= -f2 | tr -d ' ')
+OCR_PORT=${OCR_PORT:-8000}
 
-# Python
-if command -v python3 &> /dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &> /dev/null; then
-    PYTHON_CMD="python"
-else
-    echo -e "${RED}✗ Python не найден${NC}"
+# === Проверка Docker ===
+if ! command -v docker &> /dev/null; then
+    echo -e "${RED}✗ Docker не найден${NC}"
+    echo "  Установите Docker: https://docs.docker.com/get-docker/"
     exit 1
 fi
-echo -e "  ${GREEN}✓${NC} Python: $($PYTHON_CMD --version)"
 
-# Tesseract
-if ! command -v tesseract &> /dev/null; then
-    echo -e "${RED}✗ Tesseract не найден${NC}"
-    echo "  Установите: brew install tesseract tesseract-lang"
+if ! docker info &> /dev/null; then
+    echo -e "${RED}✗ Docker daemon не запущен${NC}"
     exit 1
 fi
-echo -e "  ${GREEN}✓${NC} Tesseract: $(tesseract --version 2>&1 | head -1)"
-
-# Poppler (pdftoppm)
-if ! command -v pdftoppm &> /dev/null; then
-    echo -e "${RED}✗ Poppler (pdftoppm) не найден${NC}"
-    echo "  Установите: brew install poppler"
-    exit 1
-fi
-echo -e "  ${GREEN}✓${NC} Poppler: $(pdftoppm -v 2>&1 | head -1)"
-
-# Python модули
-$PYTHON_CMD -c "import fastapi, uvicorn, pdf2image, pytesseract, deskew" 2>/dev/null || {
-    echo -e "${RED}✗ Не все Python модули установлены${NC}"
-    echo "  Выполните: pip install -r requirements.txt"
-    exit 1
-}
-echo -e "  ${GREEN}✓${NC} Python модули установлены"
+echo -e "${GREEN}✓${NC} Docker доступен"
 echo ""
 
-# === Проверка, не запущен ли уже Worker ===
-echo -e "${YELLOW}[2/4] Проверка портов...${NC}"
+# === Запуск ===
+echo -e "${YELLOW}Запуск docker-compose (порт ${OCR_PORT})...${NC}"
 
-if lsof -i :$WORKER_PORT &> /dev/null; then
-    echo -e "  ${YELLOW}⚠${NC} Порт $WORKER_PORT уже занят"
-
-    # Проверяем, это наш Worker?
-    if curl -s http://localhost:$WORKER_PORT/health | grep -q "ocr-worker"; then
-        echo -e "  ${GREEN}✓${NC} OCR Worker уже запущен"
-        WORKER_ALREADY_RUNNING=true
-    else
-        echo -e "${RED}✗ Порт $WORKER_PORT занят другим процессом${NC}"
-        exit 1
-    fi
-else
-    echo -e "  ${GREEN}✓${NC} Порт $WORKER_PORT свободен"
-    WORKER_ALREADY_RUNNING=false
-fi
-
-if lsof -i :$API_PORT &> /dev/null; then
-    echo -e "  ${YELLOW}⚠${NC} Порт $API_PORT уже занят"
-else
-    echo -e "  ${GREEN}✓${NC} Порт $API_PORT свободен"
-fi
-echo ""
-
-# === Запуск OCR Worker ===
-echo -e "${YELLOW}[3/4] Запуск OCR Worker...${NC}"
-
-if [ "$WORKER_ALREADY_RUNNING" = true ]; then
-    echo -e "  ${GREEN}✓${NC} Worker уже работает"
-else
-    # Запускаем Worker в фоне
-    echo -e "  Запуск Worker на порту $WORKER_PORT..."
-
-    nohup $PYTHON_CMD -m ocr_worker.main > "$LOG_FILE" 2>&1 &
-    WORKER_PID=$!
-    echo $WORKER_PID > "$WORKER_PID_FILE"
-
-    # Ждём готовности Worker (до 30 секунд)
-    echo -e "  Ожидание готовности Worker..."
-    for i in {1..30}; do
-        if curl -s http://localhost:$WORKER_PORT/health &> /dev/null; then
-            echo -e "  ${GREEN}✓${NC} Worker запущен (PID: $WORKER_PID)"
-            break
-        fi
-
-        # Проверяем, не упал ли процесс
-        if ! kill -0 $WORKER_PID 2>/dev/null; then
-            echo -e "${RED}✗ Worker упал при запуске${NC}"
-            echo "  Логи: $LOG_FILE"
-            tail -20 "$LOG_FILE"
-            exit 1
-        fi
-
-        sleep 1
-        echo -n "."
-    done
-    echo ""
-
-    # Финальная проверка
-    if ! curl -s http://localhost:$WORKER_PORT/health &> /dev/null; then
-        echo -e "${RED}✗ Worker не отвечает после 30 секунд${NC}"
-        echo "  Логи: $LOG_FILE"
-        exit 1
-    fi
-fi
-echo ""
-
-# === Запуск Docker API или локального API ===
-echo -e "${YELLOW}[4/4] Запуск API...${NC}"
-
-if [ "$1" = "--local" ]; then
-    # Локальный режим — запускаем API без Docker
-    echo -e "  Режим: локальный (без Docker)"
-    echo -e "  Запуск API на порту $API_PORT..."
-
-    # Устанавливаем URL воркера на localhost
-    export OCR_WORKER_URL="http://localhost:$WORKER_PORT"
-
-    # Запускаем API
-    $PYTHON_CMD -m uvicorn app.main:app --host 0.0.0.0 --port $API_PORT
-else
-    # Docker режим
-    echo -e "  Режим: Docker"
-
-    # Проверяем Docker
-    if ! command -v docker &> /dev/null; then
-        echo -e "${RED}✗ Docker не найден${NC}"
-        echo "  Используйте: ./start.sh --local"
-        exit 1
-    fi
-
-    if ! docker info &> /dev/null; then
-        echo -e "${RED}✗ Docker daemon не запущен${NC}"
-        exit 1
-    fi
-
-    echo -e "  Запуск docker-compose..."
+if [ "$1" = "--build" ]; then
     docker-compose up --build -d
-
-    # Запускаем сбор логов Docker в общий файл
-    docker-compose logs -f >> "$LOG_FILE" 2>&1 &
-    echo $! > "$SCRIPT_DIR/.docker-logs.pid"
-
-    # Ждём запуска API
-    echo -e "  Ожидание готовности API..."
-    for i in {1..30}; do
-        if curl -s http://localhost:$API_PORT/health &> /dev/null; then
-            echo -e "  ${GREEN}✓${NC} API запущен на порту $API_PORT"
-            break
-        fi
-        sleep 1
-        echo -n "."
-    done
-    echo ""
-
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║       OCR Service запущен!             ║${NC}"
-    echo -e "${GREEN}╠════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║  API:    http://localhost:$API_PORT         ║${NC}"
-    echo -e "${GREEN}║  Worker: http://localhost:$WORKER_PORT         ║${NC}"
-    echo -e "${GREEN}║  Логи:   tail -f ocr-service.log       ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
+else
+    docker-compose up -d
 fi
+
+# Ждём запуска сервиса
+echo -e "Ожидание готовности сервиса..."
+for i in {1..30}; do
+    if curl -sf "http://localhost:${OCR_PORT}/health" > /dev/null 2>&1; then
+        echo ""
+        echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
+        echo -e "${GREEN}║     OCR Service v2 запущен!                ║${NC}"
+        echo -e "${GREEN}╠════════════════════════════════════════════╣${NC}"
+        echo -e "${GREEN}║  URL:    http://localhost:${OCR_PORT}              ║${NC}"
+        echo -e "${GREEN}║  Health: http://localhost:${OCR_PORT}/health       ║${NC}"
+        echo -e "${GREEN}║  Логи:   docker-compose logs -f           ║${NC}"
+        echo -e "${GREEN}╚════════════════════════════════════════════╝${NC}"
+        exit 0
+    fi
+    sleep 1
+    echo -n "."
+done
+
+echo ""
+echo -e "${RED}✗ Сервис не ответил за 30 секунд${NC}"
+echo "  Проверьте логи: docker-compose logs"
+exit 1
